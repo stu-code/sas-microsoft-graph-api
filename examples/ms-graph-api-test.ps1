@@ -15,13 +15,16 @@
 # 3. Follow the prompts to authenticate and retrieve your user information.
 
 param(
-    [string]$ConfigPath = "config.json"
+    [string]$ConfigPath = "./config.json"
 )
 
 if (-not (Test-Path -Path $ConfigPath)) {
     Write-Error "Configuration file '$ConfigPath' not found. Verify the path to your config.json file and specify with -ConfigPath."
     exit 1
 }
+
+# get full path of config file
+$ConfigPath = (Resolve-Path -Path $ConfigPath).Path
 
 $config = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json
 $tenantId = $config.tenant_id
@@ -37,7 +40,7 @@ $authUrl = "$msloginBase/$tenantId/oauth2/authorize" +
     "&redirect_uri=$([uri]::EscapeDataString($redirectUri))" +
     "&resource=$([uri]::EscapeDataString($resource))"
 
-Write-Host "Open the following URL in your browser to authenticate:"
+Write-Host "Opening the following URL in your browser to authenticate:"
 Write-Host $authUrl
 
 Start-Process $authUrl
