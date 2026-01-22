@@ -149,6 +149,8 @@ The SAS log will contain a URL that you should copy and paste into your browser.
 
 ![authcode in URL](./images/azure_access_code.png)
 
+> **NOTE**: Recent changes in Auth Code flow can make this process more difficult. See the **Troublshooting** section later in this document for an alternative approach that uses Device Code flow. This project also includes PowerShell scripts that can help you test and obtain your first aaccess token.
+
 ## DO ONCE: Generate the first access token
 
 If you just generated your auth code for the first time or needed to get a new one because the old one was revoked or expired, then you need to use the auth code to get an initial access token.
@@ -376,27 +378,59 @@ All APIs are documented in the [Microsoft Graph API reference](https://learn.mic
 
 There are several moving parts when using these macros to access your Microsoft 365 content. Once you get it working, it's a beautiful thing. 
 
-### Using the test script to verify your setup
+### Using PowerShell scripts to verify your setup and generate your first token
 
-This project includes a PowerShell test script that you can use to verify that your application is configured correctly. Run this script on a Windows desktop from a PowerShell command terminal.
+This project includes two PowerShell scripts that you can use to verify that your application is configured correctly. 
+You can also use them to generate your auth code/access token that you can then apply directly in your SAS environment. 
+Run this script on a Windows desktop from a PowerShell command terminal.
 
-If you use this script and are not able to complete a successful API call, then it's not likely to work from your SAS environment either. Doing the work to pass this test can save frustration later.
+If you use these scripts and are not able to complete a successful API call, then it's not likely to work from your SAS environment either. By using these scripts to ensure access, you can save frustration later in your SAS environment (where it's more difficult to troubleshoot).
+
+There are two scripts: one for auth code flow and one for device code flow.
+
+#### Auth Code Flow: msgraph-authcode-flow.psl
+
+Note that the Auth Code flow has changed recently, resulting in a potentially confusing message about "phishing", and also a redirect action that makes it more difficult to capture the auth code. If you encounter this and can't get past it, you should consider trying the Device Code auth flow (described in the next section).
 
 The script is here:
 
-> [ms-graph-api-test.ps1](./examples/ms-graph-api-test.ps1)
+> [msgraph-authcode-flow.ps1](./examples/msgraph-authcode-flow.ps1)
 
 Example usage:
 
 ```
-./ms-graph-api-test.ps1 -ConfigPath c:\Projects\MS365\config.json
+./msgraph-authcode-flow.ps1 -ConfigPath c:\Projects\MS365\config.json
 ```
 
 where `config.json` is an existing file that is formatted exactly as described earlier in this documentation, with your tenant ID, application (client) ID, etc.
 
 The script will launch a browser session to authenticate to your Microsoft 365 environment and generate an access code. It **may** display a consent prompt to access your app. When complete, copy the _complete_ resulting URL from the browser address window and paste into the PowerShell command console as prompted.
 
-If the test is successful, you will see two resultls:
+#### Device Code Flow: msgraph-deviceauth-flow.psl
+
+The Device Code flow will feel familiar to anyone who has connected a third-party service to a device, for example connecting a streaming service to your smart TV. The mechanism is the same.
+
+> **NOTE:** The Device Code flow requires that your Azure app is set to **Enable Allow public client flows**. These settings are in *App registrations > Authentication > Advanced settings* in the Azure portal entry for your app.
+
+The script is here:
+
+> [msgraph-deviceauth-flow.ps1](./examples/msgraph-deviceauth-flow.ps1)
+
+Example usage:
+
+```
+./msgraph-deviceauth-flow.ps1 -ConfigPath c:\Projects\MS365\config.json
+```
+
+where `config.json` is an existing file that is formatted exactly as described earlier in this documentation, with your tenant ID, application (client) ID, etc.
+
+The script will generate a temporary code for you to enter on a Device Authorization web page. When you enter the code, you will be prompted to log in (all multifactor authentication processes apply), and also to confirm that you intend to log into your app. The script will continuous poll the service until the code is entered/verified or until you cancel the process.
+
+When completed successfully, the resulting access token will be stored in a local file.
+
+#### Script results and follow-up
+
+If the scripts are successful, you will see two resultls:
 
 * The output of the /me API call will be displayed in your PowerShell command console, verifying that you can successfully call the Microsoft Graph API.
 * A new `token.json` file will be created in the same path as your `config.json` file. You can actually use this token file as-is, and copy it to your SAS environment in the same secure location as `config.json`. When you use the macros to `%initSessionMS365;`, the process will read the refresh token and use it to get an active access token.
