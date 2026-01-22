@@ -424,7 +424,7 @@ Example usage:
 
 where `config.json` is an existing file that is formatted exactly as described earlier in this documentation, with your tenant ID, application (client) ID, etc.
 
-The script will generate a temporary code for you to enter on a Device Authorization web page. When you enter the code, you will be prompted to log in (all multifactor authentication processes apply), and also to confirm that you intend to log into your app. The script will continuous poll the service until the code is entered/verified or until you cancel the process.
+The script will generate a temporary code (usually a 15-minute expiration window) for you to enter on a Device Authorization web page. When you enter the code, you will be prompted to log in (all multifactor authentication processes apply), and also to confirm that you intend to log into your app. The script will continuously poll the service until the code is entered/verified or until you cancel the process. 
 
 When completed successfully, the resulting access token will be stored in a local file.
 
