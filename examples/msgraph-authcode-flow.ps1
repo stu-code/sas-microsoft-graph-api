@@ -1,5 +1,6 @@
-# Use this script to authenticate with Microsoft Graph API and retrieve user information.
-# It's useful to test that your Microsoft Graph API setup is working correctly.
+# Purpose: Use Auth Code Flow to authenticate with Microsoft Graph API and retrieve user information.
+# Auth Code Flow is ideal for web applications or desktop applications where the user can interact with a browser.
+
 # The script will guide you through the authentication process and save the access and refresh tokens to a file.
 # It requires a configuration file named config.json with the following structure: 
 # {
@@ -40,10 +41,14 @@ $authUrl = "$msloginBase/$tenantId/oauth2/authorize" +
     "&redirect_uri=$([uri]::EscapeDataString($redirectUri))" +
     "&resource=$([uri]::EscapeDataString($resource))"
 
+Write-Host "NOTE! Recent changes in the Auth Code Flow result in a 'phishing' warning in some browsers," -InformationAction Continue
+Write-Host "followed by a redirect after a short delay. You have to be quick to copy the URL from the address bar."
 Write-Host "Opening the following URL in your browser to authenticate:"
 Write-Host $authUrl
 
 Start-Process $authUrl
+
+
 
 Write-Host "After authenticating in the browser, paste the full redirected URL from the address bar below."
 $redirectedUrl = Read-Host "Redirected URL"
@@ -53,7 +58,7 @@ try {
     $queryParams = [System.Web.HttpUtility]::ParseQueryString($uri.Query)
     $authCode = $queryParams["code"]
     if (-not $authCode) {
-        Write-Error "Authorization code not found in the URL. Please ensure you pasted the correct redirected URL."
+        Write-Error "Authorization code was not found in the URL. Please ensure you pasted the correct redirected URL."
         exit 1
     }
     Write-Host "Authorization code captured."
@@ -89,10 +94,6 @@ Write-Host "Access and refresh tokens saved to $tokenFilePath"
 # Use the access token to call the /me endpoint
 
 $accessToken = $tokenResponse.access_token
-$refreshToken = $tokenResponse.refresh_token
-
-Write-Host "Access Token: $accessToken"
-Write-Host "Refresh Token: $refreshToken"
 
 # Call the /me endpoint
 $meResponse = Invoke-RestMethod -Method Get -Uri "https://graph.microsoft.com/v1.0/me" -Headers @{
