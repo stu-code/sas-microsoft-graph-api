@@ -114,6 +114,7 @@ See:
 
 /*
   Generate a URL that you will use to obtain an authentication code in your browser window.
+  Use this URL for the initial step of the OAuth 2.0 authorization code flow.
   Usage:
    %initConfig(configPath=/path-to-config.json);
    %generateAuthUrl();
@@ -136,6 +137,163 @@ See:
   %else
     %do;
       %put ERROR: You must use the initConfig macro first.;
+    %end;
+%mend;
+
+/* 
+ This SAS macro implements the OAuth 2.0 device code flow, which is used for authentication 
+ when you want users to authorize your application through a web browser on a different device 
+ (like a phone authenticating a desktop app, or like logging into a smart TV).
+
+ Override the app_scope parameter to request additional permissions/scopes as needed.
+ Default is Files.ReadWrite.All and Sites.ReadWrite.All for OneDrive and SharePoint access.
+
+ Using ods_show_link=1 will create an ODS output with a clickable link for the verification URL.
+ Otherwise, the URL and code are just printed to the log.
+
+ Usage for printing device code to log and polling for token:
+
+   %initConfig(configPath=/path-to-config.json);
+   %generateDeviceCode();
+   %confirmDeviceCodeToken();
+
+ Usage for putting clickable link in ODS output, then checking for token just once
+ 
+   %initConfig(configPath=/path-to-config.json);
+   %generateDeviceCode(ods_show_link=1);
+
+   [complete the sign-in in your browser, then run this line to check once for the token]
+
+   %confirmDeviceCodeToken(polling=0);
+*/
+%macro generateDeviceCode(
+   app_scope=Files.ReadWrite.All Sites.ReadWrite.All,
+   ods_show_link=0
+);
+  %global device_code browser_msg;
+  %if %symexist(tenant_id) %then
+    %do;
+      %let authorize_url=&msloginBase./&tenant_id./oauth2/v2.0/devicecode;
+      %let _currLS = %sysfunc(getoption(linesize));
+      filename devcode temp;
+      %let full_scope = User.Read openid profile offline_access &app_scope;
+
+      proc http url="&authorize_url."
+        method="POST"
+        ct="application/x-www-form-urlencoded"
+        out=devcode
+        in="client_id=&client_id.%str(&)scope=&full_scope."
+      ;
+      run;
+
+      %if (&SYS_PROCHTTP_STATUS_CODE. = 200) %then
+        %do;
+          /* Read response and capture device_code and put URL/consumer code to the log */
+          libname _dc JSON fileref=devcode;
+
+          data _null_;
+            set _dc.root;
+            call symput('device_code',device_code);
+            call symput('browser_msg',message);
+            call symput('verification_uri',verification_uri);
+            call symput('user_code',user_code);
+          run;
+
+          libname _dc clear;
+
+          %put Complete the device login using your local browser:;
+          %put -- INSTRUCTIONS -------;
+          %put &browser_msg.;
+          %put ---END ---------;
+
+          %if &ods_show_link. = 1 %then
+            %do;
+              ods escapechar='^';  /* enables ^{url "..."} syntax */
+              proc odstext;
+                p "^{style [font_size=12pt width=80pct just=center] Complete your authentication by visiting this site}";
+                p "^{style [font_size=12pt width=80pct just=center url=""&verification_uri."" tagattr='target=""_blank""'] &verification_uri.}.";
+                p "^{style [font_size=12pt width=80pct just=center] Enter code &user_code.}";
+              run;
+
+              %put NOTE: An HTML file with the device login instructions has been created: _device_code_login.html;
+            %end;
+        %end;
+      %else
+        %do;
+          %put ERROR: &sysmacroname. failed: HTTP result - &SYS_PROCHTTP_STATUS_CODE. &SYS_PROCHTTP_STATUS_PHRASE.;
+          %put Check that your tenant_id and client_id values are correct;
+          %put AND that your app is set to support Public client flows.;
+        %end;
+
+      filename devcode clear;
+      options source ls=&_currLS.;
+    %end;
+  %else
+    %do;
+      %put ERROR: You must use the initConfig macro first.;
+    %end;
+%mend;
+
+/*
+  This macro polls the token endpoint to check if the user has completed the authorization.
+  If successful, it retrieves the access token and saves it to a file named token.json.
+  Use polling=0 to make a single attempt without waiting.
+  Using polling=1 (default) will poll up to 120 times with 5-second intervals
+*/
+%macro confirmDeviceCodeToken(
+ polling = 1
+);
+  %if %symexist(device_code) %then
+    %do;
+      %let token_url=&msloginBase./&tenant_id./oauth2/v2.0/token;
+      %let token_acquired=0;
+      %let poll_interval=5;
+      %if &polling. = 0 %then 
+        %let max_attempts=1;
+      %else 
+        %let max_attempts=120;
+      %let attempt=0;
+
+      %do %while(&token_acquired. = 0 and &attempt. < &max_attempts.);
+        %let attempt=%eval(&attempt. + 1);
+        filename tokfile temp;
+
+        proc http url="&token_url."
+          method="POST"
+          ct="application/x-www-form-urlencoded"
+          out=tokfile
+          in="grant_type=urn:ietf:params:oauth:grant-type:device_code%str(&)client_id=&client_id.%str(&)device_code=&device_code."
+        ;
+        run;
+
+        %if (&SYS_PROCHTTP_STATUS_CODE. = 200) %then
+          %do;
+            libname _tk JSON fileref=tokfile;
+            %assignTokenFileref();
+            data _null_;
+              rc = fcopy('tokfile','token');
+              set _tk.root;
+              call symput('token_acquired',1);
+            run;
+            libname _tk clear;
+            
+            %put Authorization successful. Access token acquired and copied to token.json;
+          %end;
+        %else
+          %do;
+            %put Waiting for user to complete sign-in... (Attempt &attempt./&max_attempts.);
+            %let rc=%sysfunc(sleep(&poll_interval.,1));
+          %end;
+
+        filename tokfile clear;
+      %end;
+
+      %if &token_acquired. = 0 %then
+        %put ERROR: Device code authorization timeout.;
+    %end;
+  %else
+    %do;
+      %put ERROR: No device code detected. Run generateDeviceCode macro first.;
     %end;
 %mend;
 

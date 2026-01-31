@@ -135,9 +135,47 @@ If you are using SAS Viya and you would like to store your config and token file
 
 > **Note:** This ```sascontent``` flag is needed to tell the macro to use the FILENAME FILESVC method to access the SAS Content area. It requires a different file access method than traditional file systems.
 
-## DO ONCE: Get an auth code
+## Authentication flows: Auth Code or Device Code
 
-> **Note:** you need this step only if you haven't already generated an auth code and stored in token.json. See [Step 2 in this article](https://blogs.sas.com/content/sasdummy/2020/07/09/sas-programming-office-365-onedrive/).
+The macros in this project support two styles of authentication, which is a necessary step to obtaining the tokens you need to use the Microsoft Graph APIs. 
+
+* Device Code authentication flow: this process is similar to connecting your smart TV to a streaming service. You generate a one-time, temporary code that you then enter via a device login screen. 
+Once the code is verified, you make a second API call to obtain a token that can be used to access the app.
+
+* Auth Code authentication flow: this process generates a very long code that you capture from your browser address bar, then paste into your SAS program to make a second API call to get the access token.
+> NOTE: Recent changes in the Auth Code flow can make it tricky to capture the Auth Code using these steps. You'll encounter a page that warns you about a possible phishing attempt, and then the browser redirects after a short delay -- preventing you from copying the auth code. While the method still works if you are nimble enough, we recommend the Device Code flow as an easier method.
+
+### Device Code: Generate a Device Code and Verify
+
+> NOTE: To use the Device Code flow, your app must be set to allow Public Client flow. This is easy to set in the app properties within your Azure or Entra ID portal. "Allow Public Client Flow" is a safe setting when your app does not require/store your personal or client credentials -- all true for the process documented here.
+
+To use Device Code authentication in SAS with this macro library:
+
+1. Call `%generateDeviceCode();` to create a temporary device code
+2. Open the device login URL displayed in the SAS log
+3. Enter the device code when prompted
+4. Complete authentication in your browser
+5. Call `%confirmDeviceCodeToken();` to retrieve and store your access token. By default, this macro will continuous poll the login service until you either complete the authentication or the code expires.
+
+The token will be saved to token.json for future use. Here's an example sequence:
+```
+   %initConfig(configPath=/path-to-config.json);
+   %generateDeviceCode();
+   %confirmDeviceCodeToken();
+```
+
+Optionally, you can use the macros to generate a web page (using SAS ODS) that can make it easier to get to the device login link:
+```
+   %initConfig(configPath=/path-to-config.json);
+   %generateDeviceCode(ods_show_link=1);
+   %confirmDeviceCodeToken();
+```
+
+> NOTE: the login steps for Device Code flow may fail if performed on a device/environment that isn't "Managed" by your company's IT organization. An error message might show: *"Your sign-in was successful but your admin requires the device requesting access to be managed by [your company] to access this resource."* If this is the case for your SAS environment, you might want to try getting your access token using a PowerShell script on a company-issued Windows device. See [msgraph-deviceauth-flow.ps1](./examples/msgraph-deviceauth-flow.ps1).
+
+### Auth Code: Get an auth code via the browser
+
+> **Note:** you need this step only if you haven't already generated an access token and stored in token.json. See [Step 2 in this article](https://blogs.sas.com/content/sasdummy/2020/07/09/sas-programming-office-365-onedrive/).
 
 This helper macro will generate the URL you can use to generate an auth code.
 
@@ -151,7 +189,7 @@ The SAS log will contain a URL that you should copy and paste into your browser.
 
 > **NOTE**: Recent changes in Auth Code flow can make this process more difficult. See the **Troublshooting** section later in this document for an alternative approach that uses Device Code flow. This project also includes PowerShell scripts that can help you test and obtain your first aaccess token.
 
-## DO ONCE: Generate the first access token
+### Auth Code: Generate the first access token
 
 If you just generated your auth code for the first time or needed to get a new one because the old one was revoked or expired, then you need to use the auth code to get an initial access token.
 ```sas
