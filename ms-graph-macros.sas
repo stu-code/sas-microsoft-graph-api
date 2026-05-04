@@ -685,6 +685,152 @@ See:
 
 %mend;
 
+/*
+  Get the sensitivity label for a file in OneDrive or SharePoint.
+  
+  Sensitivity labels help protect sensitive information by applying
+  classification and protection settings to files.
+
+  This macro retrieves the sensitivity label information associated
+  with a specific file using the Microsoft Graph API.
+  
+  Required permissions: Files.ReadWrite.All (or Files.Read.All for read-only)
+                        Sites.ReadWrite.All (or Sites.Read) for SharePoint
+  
+  Usage:
+    %getFileSensitivityLabel(
+      driveId=your-drive-id,
+      itemId=your-file-item-id,
+      out=work.sensitivityLabel
+    );
+    
+  Output data set contains:
+    - id: The unique identifier of the sensitivity label
+    - name: The display name of the sensitivity label
+    - sensitivityLabelId: The sensitivity label ID from the file
+    - assignmentMethod: varies, assigned by system
+
+  Note only native MS 365 documents support these labels (Word, Excel, PPT, etc).
+  Doc types like TXT or CSV or PDF do not support these.
+*/
+%macro getFileSensitivityLabel(
+  driveId=,
+  itemId=,
+  out=work.sensitivityLabel
+);
+
+  %local endpoint;
+
+  /* Validate required parameters */
+  %if %isBlank(&driveId.) %then %do;
+    %put ERROR: driveId is required.;
+    %return;
+  %end;
+
+  /* Using ItemID endpoint */
+  %if not %isBlank(&itemId.) %then %do;
+    %let endpoint = &msgraphApiBase./drives/&driveId./items/&itemId./extractSensitivityLabels;
+  %end;
+  %else %do;
+    %put ERROR: itemId must be provided.;
+    %return;
+  %end;
+
+  filename resp TEMP;
+  proc http url="&endpoint."
+    method="POST"
+    oauth_bearer="&access_token"
+    out = resp;
+  run;
+
+  %if (&SYS_PROCHTTP_STATUS_CODE. = 200) %then %do;
+    libname jresp JSON fileref=resp;
+
+    data &out.;
+      length itemId $ 50
+             sensitivityLabelId $ 50
+             assignmentMethod $ 15;
+       itemId="&itemId.";
+      %if %sysfunc(exist(JRESP.LABELS)) %then %do;
+        set jresp.labels(drop=ordinal:);
+        %put NOTE: Sensitivity labels retrieved successfully. ;
+      %end;
+      %else %do;
+       %put NOTE: No labels detected. ;
+      %end;
+    run;
+    libname jresp clear;
+  %end;
+  /* create a blank record for unsupported types */
+  %else %if (&SYS_PROCHTTP_STATUS_CODE. = 415) %then %do;
+    data &out.;
+      length itemId $ 50
+             sensitivityLabelId $ 50
+             assignmentMethod $ 15;
+       itemId="&itemId.";
+       assignmentMethod = "UNSUPPPORTED";
+    run;
+    %put NOTE: Unsupported media type for sensitivity labels;
+    %end;
+  %else %if (&SYS_PROCHTTP_STATUS_CODE. = 423) %then %do;
+    %put WARNING: Cannot retrieve Sensitivity Labels: file is locked from this operation;
+    %end;
+  %else %do;
+    %put ERROR: &sysmacroname. failed: HTTP result - &SYS_PROCHTTP_STATUS_CODE. &SYS_PROCHTTP_STATUS_PHRASE.;
+  %end;
+
+  filename resp clear;
+%mend;
+
+options mlogic mprint;
+
+/* Get the sensitivity label values for ALL files within a folder */
+%macro getAllSensitivityLabels(driveId=, folderId=, out=);
+
+  %listFolderItems(driveId=&driveId., folderId=&folderId., out=work._tmpPaths);
+
+    /* Validate required parameters */
+  %if %isBlank(&driveId.) %then %do;
+    %put ERROR: driveId is required.;
+    %return;
+  %end;
+
+  %if %isBlank(&folderId.) %then %do;
+    %put ERROR: folderId is required.;
+    %return;
+  %end;
+
+  %if %isBlank(&out.) %then %do;
+    %put ERROR: out= is required. Must be a library/data set name.;
+    %return;
+  %end;
+
+  /* Get the label for each item in the folder */
+  data _null_;
+   set work._tmpPaths(where=(isFolder=0));
+   put "Processing " name;
+   call execute(catt('%nrstr(%getFileSensitivityLabel(driveId=%superq(libraryId),itemId=',id,',out=work._outSens',_n_,'));'));
+  run;
+
+  /* Combine all to one output */
+  data _tmpConcat;
+   set work._outsens:;
+  run;
+
+  proc sql;
+   create table &out. as 
+    select t2.itemId as itemId, t1.name, t2.sensitivityLabelId, t2.assignmentMethod
+     from work._tmpPaths t1 left join _tmpConcat t2 on t1.id = t2.itemId
+     where t1.isFolder = 0;
+   quit;
+
+  /* clean up */
+  proc datasets nodetails nolist lib=work;
+    delete _outSens:;
+    delete _tmpPaths _tmpConcat;
+  quit;
+%mend;
+
 /* Download a OneDrive or SharePoint file                        */
 /* Each file has a specific download URL that works with the API */
 /* This macro routine finds that URL and use PROC HTTP to GET    */

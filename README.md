@@ -371,6 +371,33 @@ Notes:
 
 * The ```uploadFile``` method uses the special "large file upload" handling to create an upload session that can accommodate files larger than the 4MB size that is the default size limit.
 
+### Example: List Sensitivity Labels
+
+In Microsoft 365, native content types (such as Word, Excel, PowerPoint, etc.) can carry sensitivity labels: classifications that also carry enforcement of how files can be shared and exported. Because of these enforcing behaviors, it's useful to know whether your files have a sensitivity label applied.
+
+```sas
+/* special macro to pull ALL items from root folder */
+%listFolderItems(driveId=&libraryId., folderId=root, out=work.paths);
+proc print data=paths (obs=10);
+run;
+
+/* Find the folder named "Sensitivity Labels */
+proc sql noprint;
+ select id into: folderId from work.paths where name="Sensitivity Labels";
+quit;
+
+/* Fetch all Sensitivity Labels (if they exist) from the items in the "Sensitivity Labels" folder */
+%getAllSensitivityLabels(driveId=&libraryId., folderId=&folderId.,out=work.senslabels);
+proc print data=work.senslabels;
+run;
+```
+
+![example sensitivity label output](./images/example-sensitivity.png)
+
+The output here does not show the business name for the sensitivity level (ex: "Confidential" or "Business Use Only"). The `sensitivityLabelId` value is simply a unique identifier, with the actual definitions/policies tracked elsewhere in your Microsoft 365 tenant. Most users will not be able to retrieve these label mappings using the APIs, but knowing the labels exist is useful. You may be able to build your own mapping based on the labels you see in the actual documents as you edit, correlating with these observed IDs from the API results.
+
+> NOTE: Some sensitivity labels might also enforce an encryption behavior for the file. In this case, you would not be able to use the APIs to download and then import/read the encrypted file within your SAS session. 
+
 ### Use any Microsoft Graph API endpoint
 
 With the authenticated session established, you can use PROC HTTP to execute any API endpoint that your app permissions allow. 
