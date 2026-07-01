@@ -108,7 +108,7 @@ See:
     %put   {;
     %put 	  "tenant_id": "your-azure-tenant",;
     %put 	  "client_id": "your-app-client-id",;
-    %put      "client_secret": "your-optional-client-secret";
+    %put    "client_secret": "your-optional-client-secret",;
     %put 	  "redirect_uri": "&msloginBase./common/oauth2/nativeclient",;
     %put 	  "resource" : "https://graph.microsoft.com";
     %put   };
@@ -1083,7 +1083,7 @@ Sample use:
    proc http url="&msgraphApiBase./me/drives/&driveId./items/&folderId.:/%sysfunc(urlencode(&sourceFilename.)):/createUploadSession"
      method="PUT"
      in='{ 
-            "item": {"@microsoft.graph.conflictBehavior": "replace" }, 
+            "item": {"@microsoft.graph.conflictBehavior": "replace"}, 
             "deferCommit": false 
          }'
      out=resp_us
