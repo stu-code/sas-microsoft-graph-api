@@ -5,8 +5,11 @@ easier when using SAS to access Microsoft 365 content. This includes OneDrive an
 SharePoint Online (including content in Microsoft Teams).
 
 To use SAS or any scripting language with Microsoft 365, you must first register a 
-client app, authenticate with your identity to grant it permissions, and obtain an
-authorization code. With the auth code in hand, you can then use the code routines in this
+client app, and either:
+1. Authenticate with your identity to grant it permissions, and obtain an authorization code
+2. Authenticate with a client secret with appliation permissions to read/write to a site
+
+With the auth code or client secret in hand, you can then use the code routines in this
 project to get an access token and invoke API methods to accomplish tasks such as:
 
 * List available drives in OneDrive
@@ -19,12 +22,31 @@ see [Using SAS with Microsoft 365](https://blogs.sas.com/content/sasdummy/2020/0
 
 **Watch**: [Demo: SAS Viya Workbench and SAS code to access Microsoft 365](https://communities.sas.com/t5/SAS-Viya-Workbench-Getting/Demo-SAS-Viya-Workbench-and-SAS-code-to-access-Microsoft-365/ta-p/952476) -- see this macro library in action. Note that these macros work from any SAS environment: PC SAS, SAS Enterprise Guide, SAS 9 and SAS Viya. 
 
-## Approach: Access Microsoft 365 on behalf of the SAS user
-
-The methods documented and implemented in this macro library rely on a user-level authentication using OAuth2. Authentication is managed by generating and refreshing tokens, which must be then provided with every API call. To succeed, you (or someone in your organization) must be able to define an application that can be managed and accessed in this way. See the following topics for more information:
+## Approach 1: Access Microsoft 365 on behalf of the SAS user
+The methods documented and implemented in this macro library are able to perform user-level authentication using OAuth2. Authentication is managed by generating and refreshing tokens, which must be then provided with every API call. To succeed, you (or someone in your organization) must be able to define an application that can be managed and accessed in this way. See the following topics for more information:
 
 * [Get access on behalf of a user](https://learn.microsoft.com/en-us/graph/auth-v2-user?tabs=http) (Microsoft Graph API)
 * [OAuth 2.0 authorization code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow) (Microsoft Graph API) -- specifically the flow described for ["mobile and native apps"](https://learn.microsoft.com/en-us/entra/identity-platform/v2-app-types#mobile-and-native-apps)
+
+## Approach 2: Access Microsoft 365 as a registered application with its own identity
+> [!WARNING]
+> A client secret is like a password for your application. Do not share it with unauthorized users or commit it to source control (GitHub, GitLab, etc.).
+
+By creating a client secret within Entra for your application and granting it the appropriate access, you can create automated scripts that can access SharePoint without requiring the user to sign in. For example, a script generates a daily report and uploads it to a SharePoint site. See the following page for more information:
+
+* [Get access without a user](https://learn.microsoft.com/en-us/graph/auth-v2-service?tabs=http) (Microsoft Graph API)
+
+> [!IMPORTANT]
+> Always configure the least privileged set of permissions required by the app when not running on behalf of the user.
+>
+> It is **not recommended** to grant `Sites.ReadWrite.All`, `Sites.FullControl.All`, or `Files.ReadWrite.All` in this scenario.
+> 
+> Instead, use:
+> - `Sites.Selected` for access to one or more sites
+> - `Lists.SelectedOperations.Selected` for access to one or more document libraries
+> - `Files.SelectedOperations.Selected` for access to one or more files
+> 
+> After administrator consent is granted, the application must be explicitly granted access to each SharePoint site, document library, file, or folder that it needs to access.
 
 ## Working within a firewall: Preparing your environment
 
@@ -83,13 +105,17 @@ These macros use a file named config.json to reference your client app details, 
 {
    "tenant_id": "your-azure-tenant",
    "client_id": "your-app-client-id",
+   "client_secret": "optional-your-client-secret",
    "redirect_uri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
    "resource" : "https://graph.microsoft.com"
 }
 ```
 > **NOTE:** Working in an Azure Government tenant? See previous section for guidance on how the redirect_uri and resource URL value might need to change.
 
-Designate a secure location for this file and for your token.json file (to be created in a later step). The information within these files is sensitive and specific to you and should be protected. See [How to protect your REST API credentials in SAS programs for guidance](https://blogs.sas.com/content/sasdummy/2018/01/16/hide-rest-api-tokens/).
+> [!WARNING]
+> Designate a secure location for this file and for your token.json file (to be created in a later step). The information within these files is sensitive and specific to you and should be protected.
+>
+> See [How to protect your REST API credentials in SAS programs for guidance](https://blogs.sas.com/content/sasdummy/2018/01/16/hide-rest-api-tokens/).
 
 If you are using SAS Viya, you can optionally create this folder and file in your SAS Content area that is private to you. For example, create a ".creds" folder within "/Users/your.account/My Folder". By default, only your account will be able to read content you place there.
 
@@ -135,15 +161,17 @@ If you are using SAS Viya and you would like to store your config and token file
 
 > **Note:** This ```sascontent``` flag is needed to tell the macro to use the FILENAME FILESVC method to access the SAS Content area. It requires a different file access method than traditional file systems.
 
-## Authentication flows: Auth Code or Device Code
+## Authentication flows: Auth Code, Device Code, and Client Secret
 
-The macros in this project support two styles of authentication, which is a necessary step to obtaining the tokens you need to use the Microsoft Graph APIs. 
+The macros in this project support three styles of authentication, which is a necessary step to obtaining the tokens you need to use the Microsoft Graph APIs. 
 
 * Device Code authentication flow: this process is similar to connecting your smart TV to a streaming service. You generate a one-time, temporary code that you then enter via a device login screen. 
 Once the code is verified, you make a second API call to obtain a token that can be used to access the app.
 
 * Auth Code authentication flow: this process generates a very long code that you capture from your browser address bar, then paste into your SAS program to make a second API call to get the access token.
 > NOTE: Recent changes in the Auth Code flow can make it tricky to capture the Auth Code using these steps. You'll encounter a page that warns you about a possible phishing attempt, and then the browser redirects after a short delay -- preventing you from copying the auth code. While the method still works if you are nimble enough, we recommend the Device Code flow as an easier method.
+
+* Client secret authentication flow: generate an access token using a client secret registered with your app.
 
 ### Device Code: Generate a Device Code and Verify
 
@@ -210,9 +238,21 @@ You should now have both config.json and token.json in your designated config fo
 
 ![example of config folder](./images/creds-in-studio.png)
 
+### Client Secret: Generate an access token
+When you include a client secret in `config.json`, `%initSessionMS365` will automatically generate an access token for you from the client secret. There is no further configuration needed. 
+
+You can manually create a new access token from a client secret using `%get_access_token`:
+
+```sas
+%get_access_token(client_secret=<client-secret-goes-here>)
+```
+
+> [!NOTE]
+> You cannot use both an authentication code and a client secret at the same time. Remove the client secret from `config.json` to go back to an authentication code method.
+
 ## Refresh access token and connect to Microsoft 365
 
-Use the ```%initSessionMS365``` macro routine to exchange the refresh-token stored in token.json for an active non-expired access token.
+Use the ```%initSessionMS365``` macro routine to exchange the refresh-token stored in token.json for an active non-expired access token. Or, if you are using a client secret, you will authenticate to receive a new non-expired access token.
 
 ```sas
  %initSessionMS365;

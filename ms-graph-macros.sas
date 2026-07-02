@@ -91,12 +91,14 @@ See:
   %if (%sysfunc(fexist(config))) %then %do;
     libname config json fileref=config;
     data _null_;
-     set config.root;
-     call symputx('tenant_id',tenant_id,'G');
-     call symputx('client_id',client_id,'G');
-     call symputx('redirect_uri',redirect_uri,'G');
-     call symputx('resource',resource,'G');
+        set config.root;
+        call symputx('tenant_id',tenant_id,'G');
+        call symputx('client_id',client_id,'G');
+        call symputx('client_secret', ifc(NOT missing(client_secret), client_secret, ''),'G');
+        call symputx('redirect_uri',redirect_uri,'G');
+        call symputx('resource',resource,'G');
     run;
+
     libname config clear;
     filename config clear;
   %end;
@@ -106,6 +108,7 @@ See:
     %put   {;
     %put 	  "tenant_id": "your-azure-tenant",;
     %put 	  "client_id": "your-app-client-id",;
+    %put    "client_secret": "your-optional-client-secret",;
     %put 	  "redirect_uri": "&msloginBase./common/oauth2/nativeclient",;
     %put 	  "resource" : "https://graph.microsoft.com";
     %put   };
@@ -182,7 +185,7 @@ See:
         method="POST"
         ct="application/x-www-form-urlencoded"
         out=devcode
-        in="client_id=&client_id.%str(&)scope=&full_scope."
+        in=form("client_id"="&client_id" "scope"="&full_scope")
       ;
       run;
 
@@ -262,8 +265,10 @@ See:
           method="POST"
           ct="application/x-www-form-urlencoded"
           out=tokfile
-          in="grant_type=urn:ietf:params:oauth:grant-type:device_code%str(&)client_id=&client_id.%str(&)device_code=&device_code."
-        ;
+          in=form("grant_type"  = "urn:ietf:params:oauth:grant-type:device_code"
+                  "client_id"   = "&client_id"
+                  "device_code" = "&device_code"
+          );
         run;
 
         %if (&SYS_PROCHTTP_STATUS_CODE. = 200) %then
@@ -313,7 +318,8 @@ See:
     data _null_;
       set oauth.root;
       call symputx('access_token', access_token,'G');
-      call symputx('refresh_token', refresh_token,'G');
+      if NOT missing(refresh_token) then call symputx('refresh_token', refresh_token,'G');      
+
       /* convert epoch value to SAS datetime */
       call symputx('expires_on',(input(expires_on,best32.)+'01jan1970:00:00'dt),'G');
     run;
@@ -349,13 +355,32 @@ See:
   This step also creates the initial token.json that will be
   used on subsequent steps/sessions to redeem a refresh token.
 */
-%macro get_access_token(auth_code, debug=0);
+%macro get_access_token(auth_code, client_secret=, debug=0);
 
   %assignTokenFileref();
 
+  /* Change the payload depending on if an auth code or 
+     client secret is used */
+  %if %symexist(auth_code) %then %do;
+    %let payload = 
+        "code"         = "&auth_code"
+        "redirect_uri" = "&redirect_uri"
+        "grant_type"   = "authorization_code"
+        "resource"     = "&resource"
+        "prompt"       = "none"
+    ;
+  %end;
+  
+  %else %if NOT %isBlank(&client_secret) %then 
+    %let payload = 
+        "client_secret" = "&client_secret" 
+        "scope"         = "https://graph.microsoft.com/.default"
+        "grant_type"    = "client_credentials"
+    ;
+
   proc http url="&msloginBase./&tenant_id./oauth2/token"
     method="POST"
-    in="%nrstr(&client_id)=&client_id.%nrstr(&code)=&auth_code.%nrstr(&redirect_uri)=&redirect_uri%nrstr(&grant_type)=authorization_code%nrstr(&resource)=&resource.%nrstr(&prompt)=none"
+    in=form("client_id"="&client_id" &payload)
     out=token;
     %if %sysevalf(&debug.) > 0 %then
       %do;
@@ -398,7 +423,13 @@ See:
 
   proc http url="&msloginbase./&tenant_id./oauth2/token"
     method="POST"
-    in="%nrstr(&client_id)=&client_id.%nrstr(&refresh_token=)&refresh_token%nrstr(&redirect_uri)=&redirect_uri.%nrstr(&grant_type)=refresh_token%nrstr(&resource)=&resource.%nrstr(&prompt)=none"
+    in=form("client_id"     = "&client_id"
+            "refresh_token" = "&refresh_token"
+            "redirect_uri"  = "&redirect_uri"
+            "grant_type"    = "refresh_token"
+            "resource"      = "&resource"
+            "prompt"        = "none"
+    )
     out=token;
     %if %sysevalf(&debug.) > 0 %then
       %do;
@@ -472,15 +503,23 @@ See:
     and call %refresh_access_token if needed.
     */
 
-    %read_token_file(token);
+        %read_token_file(token);
 
-    filename token clear;
+        filename token clear;
 
-    /* If this is first use for the session, we'll likely need to refresh  */
-    /* the token.  This will also call read_token_file again and update */
-    /* our token.json file.                                                */
-    %refresh_access_token();
-  %end;  
+        /* If this is first use for the session, we'll likely need to refresh  */
+        /* the token.  This will also call read_token_file again and update    */
+        /* our token.json file.
+        /* If you have a client secret, use get_acccess_token to get a new
+        access token.                                                       */
+
+        %if NOT %isBlank(&client_secret) %then %do;
+            %get_access_token(client_secret=&client_secret);
+        %end;
+            %else %do;
+                %refresh_access_token();
+            %end; 
+    %end;
 %mend;
 
 /* For SharePoint Online, list the main document libraries in the root of a SharePoint site */
@@ -1043,7 +1082,10 @@ Sample use:
    /* it seems we must use PUT.                                                                   */
    proc http url="&msgraphApiBase./me/drives/&driveId./items/&folderId.:/%sysfunc(urlencode(&sourceFilename.)):/createUploadSession"
      method="PUT"
-     in='{ "item": {"@microsoft.graph.conflictBehavior": "replace" }, "deferCommit": false }'
+     in='{ 
+            "item": {"@microsoft.graph.conflictBehavior": "replace"}, 
+            "deferCommit": false 
+         }'
      out=resp_us
      ct="application/json"
      oauth_bearer="&access_token";

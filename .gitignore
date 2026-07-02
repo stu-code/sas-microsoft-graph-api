@@ -1,0 +1,34 @@
+# Environment files
+.env
+.env.*
+*.env
+.creds
+.creds.*
+*.creds
+
+# Secret/config folders
+.creds*/
+.config*/
+creds*/
+credentials*/
+config*/
+configuration*/
+
+# Config JSON
+config.json
+config.*.json
+configuration.json
+configuration.*.json
+
+# Auth/token files
+auth.json
+oauth.json
+token.json
+tokens.json
+credentials.json
+service-account.json
+client-secret.json
+client_secret.json
+client_secrets.json
+secrets.json
+*.token
