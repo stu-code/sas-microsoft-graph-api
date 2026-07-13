@@ -495,6 +495,11 @@ See:
     %return;
   %end;
 
+  %if NOT (%symexist(client_id)) %then %do; 
+    %put WARNING: You must specify a client_id in your config.json file;
+    %return;
+  %end;
+
   /* if using client_secret then we don't follow the refresh token flow */
   %if NOT %isBlank(&client_secret) %then %do;
       %get_access_token(client_secret=&client_secret);
