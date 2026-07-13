@@ -19,6 +19,7 @@ See:
 /* Check to see if base URLs for services are      */
 /* initialized/overridden.                         */
 /* If not, then define them to the common defaults */
+/* To override in your code, set the global variables before calling the macro */
 %macro initBaseUrls();
  %if %symexist(msloginBase) = 0 %then %do;
    %global msloginBase;
@@ -90,6 +91,11 @@ See:
   %put NOTE: Establishing Microsoft 365 config root to &config_root.;
   %if (%sysfunc(fexist(config))) %then %do;
     libname config json fileref=config;
+    %if %sysfunc(exist(config.root)) = 0 %then %do;
+      %put ERROR: &configPath./config.json file does not contain the expected root object.;
+      %put ERROR: Check that your config.json file is valid JSON and has the expected structure.;
+      %return;
+    %end;
     data _null_;
         set config.root;
         call symputx('tenant_id',tenant_id,'G');
@@ -98,6 +104,11 @@ See:
         call symputx('redirect_uri',redirect_uri,'G');
         call symputx('resource',resource,'G');
     run;
+
+    %if not %isBlank(&client_secret.) %then %do;
+      %put NOTE: Detected client_secret. All operations will use client_secret for authentication.;
+      %put NOTE: No interactive authentication will be required.;
+    %end;
 
     libname config clear;
     filename config clear;
@@ -361,7 +372,7 @@ See:
 
   /* Change the payload depending on if an auth code or 
      client secret is used */
-  %if %symexist(auth_code) %then %do;
+  %if NOT %isBlank(&auth_code) %then %do;
     %let payload = 
         "code"         = "&auth_code"
         "redirect_uri" = "&redirect_uri"
@@ -371,12 +382,17 @@ See:
     ;
   %end;
   
-  %else %if NOT %isBlank(&client_secret) %then 
+  %else %if NOT %isBlank(&client_secret) %then %do;
     %let payload = 
         "client_secret" = "&client_secret" 
         "scope"         = "https://graph.microsoft.com/.default"
         "grant_type"    = "client_credentials"
     ;
+  %end;
+  %else %do;
+    %put ERROR: You must provide either an auth_code or a client_secret.;
+    %return;
+  %end;
 
   proc http url="&msloginBase./&tenant_id./oauth2/token"
     method="POST"
@@ -400,7 +416,7 @@ See:
   %end;
   %else %do; 
    %put ERROR: &sysmacroname. failed: HTTP result - &SYS_PROCHTTP_STATUS_CODE. &SYS_PROCHTTP_STATUS_PHRASE.; 
-   %if %sysfunc(fexist(token)) %then %do;
+   %if (%sysfunc(fexist(token)) and %sysevalf(&debug.) > 0) %then %do;
      data _null_;
       rc=jsonpp('token','log');
      run;
@@ -418,6 +434,8 @@ See:
 */
 %macro refresh_access_token(debug=0);
  
+  options noquotelenmax;
+  
   %put M365: Refreshing access token for M365;
    %assignTokenFileref();
 
@@ -457,7 +475,7 @@ See:
   %end;
 
   filename token clear;
-
+  options quotelenmax;
 %mend;
 
 
@@ -473,12 +491,20 @@ See:
 %macro initSessionMS365;
 
   %if (%isBlank(&config_root.)) %then %do; 
-    %put You must use initConfig first to set the configPath;
+    %put WARNING: You must use initConfig first to set the configPath;
     %return;
   %end;
+
+  /* if using client_secret then we don't follow the refresh token flow */
+  %if NOT %isBlank(&client_secret) %then %do;
+      %get_access_token(client_secret=&client_secret);
+    %end;   
+  %else %do;
+
   /*
     Our json file that contains the oauth token information
   */
+    
    %assignTokenFileref();
 
   %if (%sysfunc(fexist(token)) eq 0) %then %do;
@@ -509,14 +535,8 @@ See:
 
         /* If this is first use for the session, we'll likely need to refresh  */
         /* the token.  This will also call read_token_file again and update    */
-        /* our token.json file.
-        /* If you have a client secret, use get_acccess_token to get a new
-        access token.                                                       */
+          /* our token.json file. */
 
-        %if NOT %isBlank(&client_secret) %then %do;
-            %get_access_token(client_secret=&client_secret);
-        %end;
-            %else %do;
                 %refresh_access_token();
             %end; 
     %end;
@@ -820,8 +840,6 @@ See:
 
   filename resp clear;
 %mend;
-
-options mlogic mprint;
 
 /* Get the sensitivity label values for ALL files within a folder */
 %macro getAllSensitivityLabels(driveId=, folderId=, out=);
