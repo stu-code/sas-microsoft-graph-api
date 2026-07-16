@@ -76,17 +76,17 @@ See:
   This path will also contain token.json once it's generated
   by the authentication steps.
 */
-%macro initConfig(configPath=,sascontent=0);
+%macro initConfig(configPath=,configFilename=config.json, sascontent=0);
   %global config_root m365_usesascontent;
   %let m365_usesascontent = &sascontent.;
   %let config_root=&configPath.;
   %if &m365_usesascontent = 1 %then %do;
     filename config filesrvc 
       folderpath="&configPath."
-      filename="config.json";
+      filename="&configFilename";
   %end;
   %else %do;
-    filename config "&configPath./config.json";
+    filename config "&configPath./&configFilename";
   %end;
   %put NOTE: Establishing Microsoft 365 config root to &config_root.;
   %if (%sysfunc(fexist(config))) %then %do;
@@ -117,11 +117,11 @@ See:
     %put ERROR: You must create the config.json file in your configPath.; 
     %put The file contents should be:;
     %put   {;
-    %put 	  "tenant_id": "your-azure-tenant",;
-    %put 	  "client_id": "your-app-client-id",;
+    %put       "tenant_id": "your-azure-tenant",;
+    %put       "client_id": "your-app-client-id",;
     %put    "client_secret": "your-optional-client-secret",;
-    %put 	  "redirect_uri": "&msloginBase./common/oauth2/nativeclient",;
-    %put 	  "resource" : "https://graph.microsoft.com";
+    %put       "redirect_uri": "&msloginBase./common/oauth2/nativeclient",;
+    %put       "resource" : "https://graph.microsoft.com";
     %put   };
   %end;
 %mend;
@@ -326,15 +326,24 @@ See:
   %if %sysfunc(fexist(&file.)) %then %do;
     libname oauth json fileref=&file.;
 
+    filename f "C:\Users\stsztu\OneDrive - SAS\Documents\git\sas-microsoft-graph-api\tests\creds\token.json";
+
+    %let fid = %sysfunc(fopen(f));
+    %let last_modified = %sysfunc(finfo(&fid, Last Modified));
+    %let rc = %sysfunc(fclose(&fid));
+        
     data _null_;
       set oauth.root;
       call symputx('access_token', access_token,'G');
       if NOT missing(refresh_token) then call symputx('refresh_token', refresh_token,'G');      
 
-      /* convert epoch value to SAS datetime */
-      call symputx('expires_on',(input(expires_on,best32.)+'01jan1970:00:00'dt),'G');
+      /* convert epoch value to SAS datetime or if using a client secret, add to the last modified of the file */
+      if NOT missing(expires_on) then _expire_datetime = input(expires_on,best32.)+'01jan1970:00:00'dt + tzoneoff();
+          else _expire_datetime = input("&last_modified", datetime20.) + expires_in;
+
+        call symputx('expires_on',_expire_datetime,'G');
     run;
-    %put M365: Token expires on %left(%qsysfunc(putn(%sysevalf(&expires_on.+%sysfunc(tzoneoff() )),datetime20.)));
+    %put M365: Token expires on %left(%sysfunc(putn(&expires_on, datetime20.)));
 
     libname oauth clear;
   %end;
@@ -367,6 +376,7 @@ See:
   used on subsequent steps/sessions to redeem a refresh token.
 */
 %macro get_access_token(auth_code, client_secret=, debug=0);
+  %global auth_endpoint me_endpoint;
 
   %assignTokenFileref();
 
@@ -380,6 +390,9 @@ See:
         "resource"     = "&resource"
         "prompt"       = "none"
     ;
+
+    %let auth_endpoint = oauth2/token;
+    %let me_endpoint = /me;
   %end;
   
   %else %if NOT %isBlank(&client_secret) %then %do;
@@ -388,13 +401,16 @@ See:
         "scope"         = "https://graph.microsoft.com/.default"
         "grant_type"    = "client_credentials"
     ;
+
+    %let auth_endpoint = oauth2/v2.0/token;
+    %let me_endpoint =;
   %end;
   %else %do;
     %put ERROR: You must provide either an auth_code or a client_secret.;
     %return;
   %end;
 
-  proc http url="&msloginBase./&tenant_id./oauth2/token"
+  proc http url="&msloginBase./&tenant_id./&auth_endpoint"
     method="POST"
     in=form("client_id"="&client_id" &payload)
     out=token;
@@ -573,7 +589,7 @@ See:
   proc http url="&msgraphApiBase./sites/&siteHost.:&sitepath.:/drive"
        oauth_bearer="&access_token"
        out = resp;
-  	 run;
+       run;
   %if (&SYS_PROCHTTP_STATUS_CODE. = 200) %then %do;
     libname jresp json fileref=resp;
     data &out.;
@@ -603,10 +619,10 @@ See:
 */
 %macro listMyDrives(out=work.drives);
   filename resp TEMP;
-  proc http url="&msgraphApiBase./me/drives/"
+  proc http url="&msgraphApiBase.&me_endpoint/drives/"
        oauth_bearer="&access_token"
        out = resp;
-  	 run;
+       run;
 
   %if (&SYS_PROCHTTP_STATUS_CODE. = 200) %then %do;
     libname jresp json fileref=resp;
@@ -651,7 +667,7 @@ See:
   %local driveId nextLink batchnum;
 
   /* endpoint for initial list of items */
-  %let nextLink = &msgraphApiBase./me/drives/&driveId./items/&folderId./children;
+  %let nextLink = &msgraphApiBase.&me_endpoint/drives/&driveId./items/&folderId./children;
   %let batchnum = 1;
   data _folderItems0;
    length name $ 500;
@@ -663,7 +679,7 @@ See:
     proc http url="&nextLink."
          oauth_bearer="&access_token"
          out = resp;
-    	 run;
+         run;
      
     libname jresp json fileref=resp; 
 
@@ -871,7 +887,7 @@ See:
   data _null_;
    set work._tmpPaths(where=(isFolder=0));
    put "Processing " name;
-   call execute(catt('%nrstr(%getFileSensitivityLabel(driveId=%superq(libraryId),itemId=',id,',out=work._outSens',_n_,'));'));
+   call execute(catt('%nrstr(%getFileSensitivityLabel(driveId=%superq(driveId),itemId=',id,',out=work._outSens',_n_,'));'));
   run;
 
   /* Combine all to one output */
@@ -1103,7 +1119,7 @@ Sample use:
    /* If a file of the same name exists, we will REPLACE it.                                      */
    /* The API doc says this should be POST, but since we provide a body with conflict directives, */
    /* it seems we must use PUT.                                                                   */
-   proc http url="&msgraphApiBase./me/drives/&driveId./items/&folderId.:/%sysfunc(urlencode(&sourceFilename.)):/createUploadSession"
+   proc http url="&msgraphApiBase.&me_endpoint/drives/&driveId./items/&folderId.:/%sysfunc(urlencode(&sourceFilename.)):/createUploadSession"
      method="PUT"
      in='{ 
             "item": {"@microsoft.graph.conflictBehavior": "replace"}, 
