@@ -7,12 +7,12 @@
 *.creds
 
 # Secret/config folders
-.creds*/
-.config*/
-creds*/
-credentials*/
-config*/
-configuration*/
+**/.creds*/
+**/.config*/
+**/creds*/
+**/credentials*/
+**/config*/
+**/configuration*/
 
 # Config JSON
 config.json
