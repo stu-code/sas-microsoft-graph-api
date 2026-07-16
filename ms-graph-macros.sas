@@ -326,7 +326,7 @@ See:
   %if %sysfunc(fexist(&file.)) %then %do;
     libname oauth json fileref=&file.;
 
-    %let fid = %sysfunc(fopen(oauth));
+    %let fid = %sysfunc(fopen(&file.));
     %let last_modified = %sysfunc(finfo(&fid, Last Modified));
     %let rc = %sysfunc(fclose(&fid));
         
