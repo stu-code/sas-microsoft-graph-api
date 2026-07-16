@@ -326,9 +326,7 @@ See:
   %if %sysfunc(fexist(&file.)) %then %do;
     libname oauth json fileref=&file.;
 
-    filename f "C:\Users\stsztu\OneDrive - SAS\Documents\git\sas-microsoft-graph-api\tests\creds\token.json";
-
-    %let fid = %sysfunc(fopen(f));
+    %let fid = %sysfunc(fopen(oauth));
     %let last_modified = %sysfunc(finfo(&fid, Last Modified));
     %let rc = %sysfunc(fclose(&fid));
         
