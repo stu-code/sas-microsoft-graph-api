@@ -4,6 +4,12 @@
     DRIVE_ID
     FOLDER_ID
     AUTH_CODE
+
+   Save all credentials for testing to ./tests/creds:
+      - config.auth.json
+      - config.secret.json
+
+   DO NOT COMMIT .env OR ANY FILES IN THE CREDS FOLDER
 */
 
 %let regex  = %sysfunc(prxparse(s/\\[^\\]*$//));
